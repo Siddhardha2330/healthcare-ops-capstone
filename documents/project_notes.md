@@ -1,42 +1,48 @@
 # Healthcare Ops Capstone Notes
 
-## Goal
+## Quick Objective
 
-Build a Healthcare Ops analytics pipeline using:
+Build a healthcare analytics pipeline that moves hospital operational data from `PostgreSQL` into `Databricks` through `Amazon S3`, then produces business KPIs for leadership reporting.
 
-- PostgreSQL as OLTP source
-- Amazon S3 as raw cloud storage
-- Databricks Free Edition for Bronze, Silver, and Gold processing
+## Core Stack
 
-## Main Datasets
+- `PostgreSQL` for OLTP
+- `Amazon S3` for raw storage
+- `Databricks` for Bronze, Silver, Gold, and Workflow orchestration
 
-- patients
-- doctors
-- departments
-- appointments
-- billing
-- diagnostics
-- prescriptions
-- feedback
+## Main Healthcare Tables
+
+- `patients`
+- `appointments`
+- `doctors`
+- `departments`
+- `billing`
+- `diagnostics`
+- `prescriptions`
+- `feedback`
+
+## External Dataset
+
 - Kaggle no-show appointments dataset
 
-## Key Outcomes
+## Key KPI Outputs
 
-- no-show analysis
+- no-show rate
 - doctor utilization
 - department revenue
 - wait time trends
-- patient revisit analysis
+- patient revisit rate
 - diagnostics volume
 - feedback summary
 
-## Incremental Pattern
+## Important Design Choice
 
-Appointments use a required full-load plus incremental-load design:
+`appointments` is treated as the main transactional table and uses a full-load plus incremental-load design.
 
-- full load initializes the Bronze appointments table
-- incremental load updates existing appointments and inserts new ones
-- Silver and Gold are refreshed from the final Bronze state
+Reason:
+- appointment records change over time
+- no-show/completed/cancelled state can change
+- new appointments continue to arrive
 
 ## Final Verified State
 
@@ -46,3 +52,19 @@ Appointments use a required full-load plus incremental-load design:
 - Appointments load audit rows: `2`
 - Data quality invalid appointments: `0`
 
+## Implemented Optimizations
+
+- appointments full-load plus incremental-load design
+- Bronze Auto Loader style ingestion with safe batch fallback
+- partition-aware Delta writes using `load_date` and `visit_month`
+- broadcast joins for small reference data in Silver
+- pre-joined Silver table for repeated Gold KPI use
+- best-effort Delta `OPTIMIZE` hooks
+- guarded cache hooks for serverless compatibility
+
+## Main Interview Point
+
+This project demonstrates both:
+
+- a standard medallion pipeline
+- a separate incremental fact-style process for appointments

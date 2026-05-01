@@ -20,6 +20,7 @@ dbutils.widgets.text("full_source_path", "s3://healthcare-ops-capstone-siddh-202
 dbutils.widgets.text("incremental_source_path", "s3://healthcare-ops-capstone-siddh-20260421235653/raw/postgresql/appointments/landing/incremental/", "Incremental source path")
 dbutils.widgets.text("processed_path", "s3://healthcare-ops-capstone-siddh-20260421235653/raw/postgresql/appointments/processed/", "Processed path")
 dbutils.widgets.text("batch_id", "", "Batch ID")
+dbutils.widgets.dropdown("optimize_target", "true", ["true", "false"], "Optimize target table")
 
 catalog = dbutils.widgets.get("catalog")
 bronze_schema = dbutils.widgets.get("bronze_schema")
@@ -30,6 +31,7 @@ full_source_path = dbutils.widgets.get("full_source_path").rstrip("/") + "/"
 incremental_source_path = dbutils.widgets.get("incremental_source_path").rstrip("/") + "/"
 processed_path = dbutils.widgets.get("processed_path").rstrip("/") + "/"
 batch_id = dbutils.widgets.get("batch_id") or datetime.now().strftime("%Y%m%d%H%M%S")
+optimize_target = dbutils.widgets.get("optimize_target") == "true"
 
 target_table = f"{catalog}.{bronze_schema}.appointments"
 audit_table = f"{catalog}.{bronze_schema}.appointments_load_audit"
@@ -51,6 +53,7 @@ def read_appointments(path):
         .option("inferSchema", True)
         .csv(path)
         .withColumn("load_time", F.current_timestamp())
+        .withColumn("load_date", F.to_date("load_time"))
         .withColumn("batch_id", F.lit(batch_id))
         .withColumn("source_system", F.lit("postgresql_appointments"))
         .select("*", F.col("_metadata.file_path").alias("source_file"))
@@ -100,12 +103,20 @@ display(final_df.orderBy(primary_key))
     final_df.write
     .mode("overwrite")
     .option("overwriteSchema", "true")
+    .partitionBy("load_date")
     .format("delta")
     .saveAsTable(target_table)
 )
 
 final_count = spark.table(target_table).count()
 print(f"Appointments target count after {action}: {final_count}")
+
+if optimize_target:
+    try:
+        spark.sql(f"OPTIMIZE {target_table} ZORDER BY ({primary_key}, patient_id, doctor_id)")
+        print(f"Optimized {target_table}")
+    except Exception as exc:
+        print(f"Skipping optimize for {target_table}: {exc}")
 
 # COMMAND ----------
 
@@ -149,4 +160,3 @@ display(spark.table(audit_table).orderBy(F.col("audit_created_at").desc()))
 # MAGIC ## Processed Folder Note
 # MAGIC In production, source files can be moved from landing to processed after successful load.
 # MAGIC For this capstone, the audit table records processed batches and the landing files are preserved for demo repeatability.
-

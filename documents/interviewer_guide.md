@@ -273,7 +273,22 @@ Tasks:
 
 This shows the project is not only notebook-based, but also orchestrated as a repeatable pipeline.
 
-## 12. What Was Learned
+## 12. Implemented Optimizations
+
+The project includes practical optimizations that fit the current Databricks architecture:
+
+- `appointments` uses a full-load plus incremental-load pattern instead of full refresh only
+- Bronze ingestion includes an Auto Loader style implementation with safe fallback to batch CSV reads
+- Bronze and appointments fact-style writes include partition-aware Delta storage using `load_date`
+- Silver fact-style writes include partition-aware storage using `visit_month`
+- small reference tables are broadcast-joined into `appointments_enriched`
+- Gold queries read from pre-joined Silver data instead of repeating joins in every KPI build
+- Delta `OPTIMIZE` hooks were added as best-effort maintenance steps
+- cache hooks were added as best-effort optimization, but guarded because Databricks serverless does not support normal persist/cache behavior in this environment
+
+These optimizations are designed to be technically valid while still remaining compatible with Databricks Free Edition.
+
+## 13. What Was Learned
 
 This project demonstrates:
 

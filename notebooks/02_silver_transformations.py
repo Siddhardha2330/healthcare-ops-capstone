@@ -12,19 +12,51 @@ dbutils.widgets.text("catalog", "health_cat", "Catalog")
 dbutils.widgets.text("bronze_schema", "bronze", "Bronze schema")
 dbutils.widgets.text("silver_schema", "silver", "Silver schema")
 dbutils.widgets.text("write_mode", "overwrite", "Write mode")
+dbutils.widgets.dropdown("cache_hot_tables", "true", ["true", "false"], "Cache hot tables")
+dbutils.widgets.dropdown("optimize_silver", "true", ["true", "false"], "Optimize Silver tables")
 
 catalog = dbutils.widgets.get("catalog")
 bronze_schema = dbutils.widgets.get("bronze_schema")
 silver_schema = dbutils.widgets.get("silver_schema")
 write_mode = dbutils.widgets.get("write_mode")
+cache_hot_tables = dbutils.widgets.get("cache_hot_tables") == "true"
+optimize_silver = dbutils.widgets.get("optimize_silver") == "true"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{silver_schema}")
 
-def write_delta_table(df, table_name):
+def write_delta_table(df, table_name, partition_cols=None):
     writer = df.write.mode(write_mode).format("delta")
     if write_mode == "overwrite":
         writer = writer.option("overwriteSchema", "true")
+    if partition_cols:
+        writer = writer.partitionBy(*partition_cols)
     writer.saveAsTable(f"{catalog}.{silver_schema}.{table_name}")
+
+
+def optimize_table(table_name, zorder_cols=None):
+    if not optimize_silver:
+        return
+    optimize_sql = f"OPTIMIZE {catalog}.{silver_schema}.{table_name}"
+    if zorder_cols:
+        optimize_sql += f" ZORDER BY ({', '.join(zorder_cols)})"
+    try:
+        spark.sql(optimize_sql)
+        print(f"Optimized {table_name}")
+    except Exception as exc:
+        print(f"Skipping optimize for {table_name}: {exc}")
+
+
+def try_cache(df, label):
+    if not cache_hot_tables:
+        return df, False
+    try:
+        cached_df = df.cache()
+        cached_df.count()
+        print(f"Cached {label}")
+        return cached_df, True
+    except Exception as exc:
+        print(f"Skipping cache for {label}: {exc}")
+        return df, False
 
 # COMMAND ----------
 
@@ -101,22 +133,26 @@ silver_appointments = (
     .withColumn("has_invalid_appointment_ts", F.col("appointment_ts").isNull())
 )
 
-write_delta_table(silver_appointments, "appointments_clean")
+write_delta_table(silver_appointments, "appointments_clean", ["visit_month"])
+optimize_table("appointments_clean", ["appointment_id", "patient_id"])
 
 # COMMAND ----------
 
 appointments_enriched = (
     silver_appointments.alias("a")
-    .join(doctors_dim.alias("d"), "doctor_id", "left")
-    .join(departments_dim.alias("dept"), "department_id", "left")
-    .join(billing_fact.alias("b"), "appointment_id", "left")
-    .join(patients_dim.alias("p"), "patient_id", "left")
+    .join(F.broadcast(doctors_dim).alias("d"), "doctor_id", "left")
+    .join(F.broadcast(departments_dim).alias("dept"), "department_id", "left")
+    .join(F.broadcast(billing_fact).alias("b"), "appointment_id", "left")
+    .join(F.broadcast(patients_dim).alias("p"), "patient_id", "left")
     .withColumn("is_unmatched_doctor", F.col("doctor_name").isNull())
     .withColumn("is_unmatched_patient", F.col("patient_name").isNull())
     .withColumn("is_valid_record", ~(F.col("has_null_patient_id") | F.col("has_null_doctor_id") | F.col("has_invalid_appointment_ts") | F.col("is_unmatched_doctor") | F.col("is_unmatched_patient")))
 )
 
-write_delta_table(appointments_enriched, "appointments_enriched")
+appointments_enriched, appointments_enriched_cached = try_cache(appointments_enriched, "appointments_enriched")
+
+write_delta_table(appointments_enriched, "appointments_enriched", ["visit_month"])
+optimize_table("appointments_enriched", ["doctor_id", "patient_id"])
 
 display(appointments_enriched)
 
@@ -155,6 +191,9 @@ dq_summary = spark.createDataFrame(
 
 write_delta_table(dq_summary, "dq_appointments_summary")
 display(dq_summary)
+
+if appointments_enriched_cached:
+    appointments_enriched.unpersist()
 
 # COMMAND ----------
 

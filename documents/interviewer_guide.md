@@ -40,18 +40,20 @@ PostgreSQL
 
 ## 4. Simplified Schema Diagram
 
-The project is centered around `appointments`, which connects the main operational entities:
+The project is centered around `appointments`, which connects the main operational entities.
 
-```text
-departments -> doctors -> appointments -> billing
-                           |
-                           -> diagnostics
-                           -> prescriptions
-                           -> feedback
-patients ------------------|
-```
+The schema diagram in this document shows the main tables and the most relevant business columns used in the pipeline:
 
-This means:
+- `departments`
+- `doctors`
+- `patients`
+- `appointments`
+- `billing`
+- `diagnostics`
+- `prescriptions`
+- `feedback`
+
+The relationship pattern is:
 
 - one department can have many doctors
 - one doctor can handle many appointments
